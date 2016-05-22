@@ -1,0 +1,191 @@
+---
+title: "Prediction Assignment Writeup"
+author: "Matias Caggiani"
+date: "May 22, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Data
+
+The training data for this project are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+## Goal
+
+The goal of your project is to predict the manner in which they did the exercise. This is the “classe” variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
+
+# Reproducibility
+
+## Load required libraries
+```{r, echo=T}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+library(randomForest)
+library(knitr)
+library(caTools)
+```
+## Load data
+```{r}
+setwd("~/Dropbox/Coursera/JohnHopkins/8_MachineLearning/courseProject")
+
+training = read.csv("pml-training.csv", na.strings=c("NA","#DIV/0!",""))
+
+testing = read.csv("pml-testing.csv", na.strings=c("NA","#DIV/0!",""))
+```
+## Split the train data
+```{r}
+set.seed(1984)
+
+spl = sample.split(training$classe, SplitRatio = 0.6)
+
+train = subset(training, spl==T)
+
+test = subset(training, spl==F)
+```
+## Clean the data
+```{r}
+nearZerVar = nearZeroVar(train, saveMetrics=T)
+
+train = train[,nearZerVar$nzv==F]
+
+nearZerVar = nearZeroVar(test, saveMetrics=T)
+
+test = test[,nearZerVar$nzv==F]
+```
+## Remove the first column of the train data set since we don't need it
+```{r}
+train = train[c(-1)]
+```
+## Clean variables with more than 70% NA to remove noise 
+```{r}
+trainAux = train 
+for(i in 1:length(train)) {
+    if( sum( is.na( train[, i] ) ) /nrow(train) >= .7) {
+        for(j in 1:length(trainAux)) {
+            if( length( grep(names(train[i]), names(trainAux)[j]) ) == 1)  {
+                trainAux = trainAux[ , -j]
+            }   
+        } 
+    }
+}
+
+train = trainAux
+
+rm(trainAux)
+```
+## Transform the myTesting and testing data sets
+```{r}
+cleanAux1 = colnames(train)
+
+cleanAux2 = colnames(train[, -58])  
+
+test = test[cleanAux1]         
+testing = testing[cleanAux2]             
+```
+## Coerce the test and train data into the same type
+```{r}
+for (i in 1:length(testing) ) {
+    for(j in 1:length(train)) {
+        if( length( grep(names(train[i]), names(testing)[j]) ) == 1)  {
+            class(testing[j]) <- class(train[i])
+        }      
+    }      
+}
+
+testing = rbind(train[2, -58] , testing)
+
+testing = testing[-1,]
+```
+# Prediction with Decision Trees
+```{r}
+set.seed(1984)
+
+fitDecisionTree = rpart(classe ~ ., data=train, method="class")
+
+fancyRpartPlot(fitDecisionTree)
+
+DecisionTreePred = predict(fitDecisionTree, test, type = "class")
+
+DecisionTreeConfMatrix = confusionMatrix(DecisionTreePred, test$classe)
+
+DecisionTreeConfMatrix
+
+plot(DecisionTreeConfMatrix$table, col = DecisionTreeConfMatrix$byClass, main = paste("Decision Tree Confusion Matrix: Accuracy =", round(DecisionTreeConfMatrix$overall['Accuracy'], 4)))
+```
+# Prediction with Random Forests
+```{r}
+set.seed(1984)
+
+fitRandomForest = randomForest(classe ~ ., data=train)
+
+RandomForestPred = predict(fitRandomForest, test, type = "class")
+
+RandomForestConfMatrix = confusionMatrix(RandomForestPred, test$classe)
+
+RandomForestConfMatrix
+
+plot(fitRandomForest)
+
+plot(RandomForestConfMatrix$table, col = RandomForestConfMatrix$byClass, main = paste("Random Forest Confusion Matrix: Accuracy =", round(RandomForestConfMatrix$overall['Accuracy'], 4)))
+```
+
+# Prediction with Generalized Boosted Regression
+
+```{r}
+set.seed(1984)
+
+fitControl = trainControl(method = "repeatedcv",number = 5,repeats = 1)
+
+fitGeneralizedBoostedRegression = train(classe ~ ., data=train, method = "gbm",trControl =fitControl,verbose = F)
+
+GeneralizedBoostedRegressionPred = predict(fitGeneralizedBoostedRegression, newdata=test,n.trees=fitGeneralizedBoostedRegression$n.trees)
+
+GeneralizedBoostedRegressionConfMatrix = confusionMatrix(GeneralizedBoostedRegressionPred, test$classe)
+
+GeneralizedBoostedRegressionConfMatrix
+
+plot(fitGeneralizedBoostedRegression, ylim=c(0.9, 1))
+```
+# Conclusion
+Decision Tree = Accuracy : 0.8647  95% CI : (0.8569, 0.8722)
+
+Random Forest = Accuracy : 0.9989  95% CI : (0.9978, 0.9995)
+
+Generalized Boosted Regression = Accuracy : 0.9972  95% CI : (0.9958, 0.9982)
+
+The confusion matrices show, that the Random Forest algorithm performens better than Decision Tree and Generalized Boosted Regression. Moreover, the accuracy for the Random Forest model was 0.9989 95% CI : (0.9978, 0.9995) compared to 0.9972  95% CI : (0.9958, 0.9982) for Generalized Boosted Regression and 0.8647  95% CI : (0.8569, 0.8722) for Decision Tree. The Random Forest model is choosen.
+## Expected out-of-sample error
+The expected out-of-sample error is estimated at 0.0011, or 0.11%. The expected out-of-sample error is calculated as 1 - accuracy for predictions made against the cross-validation set. Our Test data set comprises 20 cases. With an accuracy above 99% on our cross-validation data, we can expect that very few, or none, of the test samples will be missclassified.
+# Predicting Results on the Test Data
+```{r}
+predictionOnTesting = predict(fitRandomForest, testing, type = "class")
+
+predictionOnTesting
+```
+# Submission
+```{r}
+submission = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=F,row.names=F,col.names=F)
+    }
+}
+
+submission(predictionOnTesting)
+```
+
